@@ -5,6 +5,7 @@ use regex::Regex;
 use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -117,10 +118,10 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init(args) => cmd_init(args),
         Commands::Ingest(args) => cmd_ingest(args),
-        Commands::Search(args) => cmd_search(args),
-        Commands::Show(args) => cmd_show(args),
-        Commands::Links(args) => cmd_links(args),
-        Commands::Backlinks(args) => cmd_backlinks(args),
+        Commands::Search(args) => cmd_search(&args),
+        Commands::Show(args) => cmd_show(&args),
+        Commands::Links(args) => cmd_links(&args),
+        Commands::Backlinks(args) => cmd_backlinks(&args),
         Commands::Reindex => cmd_reindex(),
         Commands::Lint => cmd_lint(),
     }
@@ -180,7 +181,7 @@ fn cmd_ingest(args: IngestArgs) -> Result<()> {
     }
 
     let slug = slugify(&title);
-    let page_path = paths.sources_dir.join(format!("{}.md", slug));
+    let page_path = paths.sources_dir.join(format!("{slug}.md"));
     let body = source_stub_page(&title, &copied_source, &source_text);
     fs::write(&page_path, ensure_trailing_newline(&body))
         .with_context(|| format!("failed to write {}", page_path.display()))?;
@@ -202,7 +203,7 @@ fn cmd_ingest(args: IngestArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_search(args: SearchArgs) -> Result<()> {
+fn cmd_search(args: &SearchArgs) -> Result<()> {
     let (_, paths) = load_workspace()?;
     let pages = load_pages(&paths)?;
     let hits = search_pages(&pages, &args.query, args.top);
@@ -219,7 +220,7 @@ fn cmd_search(args: SearchArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_show(args: PageArgs) -> Result<()> {
+fn cmd_show(args: &PageArgs) -> Result<()> {
     let (_, paths) = load_workspace()?;
     let pages = load_pages(&paths)?;
     let page = resolve_page(&paths, &pages, &args.page)?;
@@ -237,12 +238,12 @@ fn cmd_show(args: PageArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_links(args: PageArgs) -> Result<()> {
+fn cmd_links(args: &PageArgs) -> Result<()> {
     let (_, paths) = load_workspace()?;
     let pages = load_pages(&paths)?;
     let page = resolve_page(&paths, &pages, &args.page)?;
     let page_set: HashSet<PathBuf> = pages.iter().map(|page| page.rel_path.clone()).collect();
-    let links = extract_links(&paths, &page, &page_set)?;
+    let links = extract_links(&paths, page, &page_set)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&links)?);
@@ -259,7 +260,7 @@ fn cmd_links(args: PageArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_backlinks(args: PageArgs) -> Result<()> {
+fn cmd_backlinks(args: &PageArgs) -> Result<()> {
     let (_, paths) = load_workspace()?;
     let pages = load_pages(&paths)?;
     let target = resolve_page(&paths, &pages, &args.page)?;
@@ -289,7 +290,7 @@ fn cmd_reindex() -> Result<()> {
     reindex(&paths)?;
     println!(
         "Rebuilt {}",
-        display_rel(&paths.index_path.strip_prefix(&paths.root)?.to_path_buf())
+        display_rel(paths.index_path.strip_prefix(&paths.root)?)
     );
     Ok(())
 }
@@ -343,7 +344,7 @@ fn cmd_lint() -> Result<()> {
         Ok(())
     } else {
         for issue in &issues {
-            println!("- {}", issue);
+            println!("- {issue}");
         }
         bail!("wiki lint found {} issue(s)", issues.len())
     }
@@ -413,7 +414,7 @@ fn reindex(paths: &WikiPaths) -> Result<()> {
         let entry = format!(
             "- [{}]({}) - {}",
             page.title,
-            index_link_path(&paths.index_path, &page.abs_path)?.display(),
+            index_link_path(&paths.index_path, &page.abs_path).display(),
             sanitize_summary(first_meaningful_line(&page.body).unwrap_or("wiki page"))
         );
         if page.rel_path.starts_with(&sources_rel) {
@@ -445,7 +446,7 @@ fn load_pages(paths: &WikiPaths) -> Result<Vec<Page>> {
     let mut pages = Vec::new();
     for entry in WalkDir::new(&paths.wiki_dir)
         .into_iter()
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
     {
         let path = entry.path();
         if !entry.file_type().is_file()
@@ -495,10 +496,10 @@ fn search_pages(pages: &[Page], query: &str, top: usize) -> Vec<SearchHit> {
 
 fn resolve_page<'a>(paths: &WikiPaths, pages: &'a [Page], query: &str) -> Result<&'a Page> {
     let candidate = absolute_from_root(&paths.root, Path::new(query));
-    if let Ok(rel) = candidate.strip_prefix(&paths.root) {
-        if let Some(page) = pages.iter().find(|page| page.rel_path == rel) {
-            return Ok(page);
-        }
+    if let Ok(rel) = candidate.strip_prefix(&paths.root)
+        && let Some(page) = pages.iter().find(|page| page.rel_path == rel)
+    {
+        return Ok(page);
     }
 
     let query_norm = query.trim_end_matches(".md");
@@ -506,22 +507,21 @@ fn resolve_page<'a>(paths: &WikiPaths, pages: &'a [Page], query: &str) -> Result
     let mut matches = pages
         .iter()
         .filter(|page| {
-            page.rel_path == PathBuf::from(query)
-                || page.rel_path == PathBuf::from(format!("{}.md", query_norm))
+            page.rel_path == Path::new(query)
+                || page.rel_path == Path::new(&format!("{query_norm}.md"))
                 || page.abs_path == candidate
                 || page
                     .rel_path
                     .file_stem()
                     .and_then(|name| name.to_str())
-                    .map(|name| name == query_norm || name == query_slug)
-                    .unwrap_or(false)
+                    .is_some_and(|name| name == query_norm || name == query_slug)
                 || slugify(&page.title) == query_slug
         })
         .collect::<Vec<_>>();
 
     matches.sort_by_key(|page| page.rel_path.clone());
     match matches.len() {
-        0 => bail!("no page matched `{}`", query),
+        0 => bail!("no page matched `{query}`"),
         1 => Ok(matches[0]),
         _ => {
             let names = matches
@@ -529,7 +529,7 @@ fn resolve_page<'a>(paths: &WikiPaths, pages: &'a [Page], query: &str) -> Result
                 .map(|page| page.rel_path.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            bail!("page `{}` is ambiguous: {}", query, names)
+            bail!("page `{query}` is ambiguous: {names}")
         }
     }
 }
@@ -594,10 +594,7 @@ fn append_log(log_path: &Path, op: &str, title: &str, details: &str) -> Result<(
     let mut log = fs::read_to_string(log_path)
         .with_context(|| format!("failed to read {}", log_path.display()))?;
     let stamp = Local::now().format("%Y-%m-%d %H:%M");
-    log.push_str(&format!(
-        "\n## [{}] {} | {}\n\n{}\n",
-        stamp, op, title, details
-    ));
+    let _ = write!(log, "\n## [{stamp}] {op} | {title}\n\n{details}\n");
     fs::write(log_path, ensure_trailing_newline(&log))
         .with_context(|| format!("failed to write {}", log_path.display()))?;
     Ok(())
@@ -624,16 +621,16 @@ fn normalize_abs_link_to_rel(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
 }
 
-fn index_link_path(index_path: &Path, target_path: &Path) -> Result<PathBuf> {
+fn index_link_path(index_path: &Path, target_path: &Path) -> PathBuf {
     let base = index_path.parent().unwrap_or_else(|| Path::new(""));
-    Ok(target_path
+    target_path
         .strip_prefix(base)
         .unwrap_or(target_path)
-        .to_path_buf())
+        .to_path_buf()
 }
 
 fn push_section(index: &mut String, name: &str, entries: &[String]) {
-    index.push_str(&format!("\n## {}\n", name));
+    let _ = write!(index, "\n## {name}\n");
     if entries.is_empty() {
         index.push('\n');
         return;
@@ -676,7 +673,7 @@ fn infer_title(source_path: &Path, source_text: &str) -> String {
 fn slugify(input: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
-    for ch in input.chars().flat_map(|ch| ch.to_lowercase()) {
+    for ch in input.chars().flat_map(char::to_lowercase) {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch);
             last_dash = false;
@@ -692,7 +689,7 @@ fn tokenize(input: &str) -> Vec<String> {
     input
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|token| token.len() > 1)
-        .map(|token| token.to_lowercase())
+        .map(str::to_lowercase)
         .collect()
 }
 
@@ -722,6 +719,6 @@ fn ensure_trailing_newline(text: &str) -> String {
     if text.ends_with('\n') {
         text.to_string()
     } else {
-        format!("{}\n", text)
+        format!("{text}\n")
     }
 }
