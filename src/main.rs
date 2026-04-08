@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
 use clap::{Args, Parser, Subcommand};
 use regex::Regex;
@@ -413,7 +413,7 @@ fn reindex(paths: &WikiPaths) -> Result<()> {
         }
         let entry = format!(
             "- [{}]({}) - {}",
-            page.title,
+            escape_markdown_link_text(&page.title),
             index_link_path(&paths.index_path, &page.abs_path).display(),
             sanitize_summary(first_meaningful_line(&page.body).unwrap_or("wiki page"))
         );
@@ -435,6 +435,20 @@ fn reindex(paths: &WikiPaths) -> Result<()> {
     push_section(&mut index, "Analyses", &analyses);
     if !other.is_empty() {
         push_section(&mut index, "Other", &other);
+    }
+
+    let indexed = indexed_pages_from_text(paths, &index)?;
+    let missing = load_pages(paths)?
+        .into_iter()
+        .filter(|page| page.rel_path != index_rel && page.rel_path != log_rel)
+        .filter(|page| !indexed.contains(&page.rel_path))
+        .map(|page| page.rel_path.display().to_string())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!(
+            "generated index is incomplete; missing entries for {}",
+            missing.join(", ")
+        );
     }
 
     fs::write(&paths.index_path, ensure_trailing_newline(&index))
@@ -581,10 +595,14 @@ fn extract_links(
 fn indexed_pages(paths: &WikiPaths) -> Result<HashSet<PathBuf>> {
     let index = fs::read_to_string(&paths.index_path)
         .with_context(|| format!("failed to read {}", paths.index_path.display()))?;
-    let link_re = Regex::new(r"\[[^\]]+\]\(([^)]+\.md)\)")?;
+    indexed_pages_from_text(paths, &index)
+}
+
+fn indexed_pages_from_text(paths: &WikiPaths, index: &str) -> Result<HashSet<PathBuf>> {
+    let link_re = Regex::new(r"\[(?:\\.|[^\\\]])+\]\(([^)]+\.md)\)")?;
     let base = paths.index_path.parent().unwrap_or_else(|| Path::new(""));
     Ok(link_re
-        .captures_iter(&index)
+        .captures_iter(index)
         .filter_map(|caps| caps.get(1).map(|m| normalize_link_target(base, m.as_str())))
         .map(|path| normalize_abs_link_to_rel(&paths.root, &path))
         .collect())
@@ -697,6 +715,12 @@ fn sanitize_summary(summary: &str) -> String {
     summary.replace('\n', " ").trim().to_string()
 }
 
+fn escape_markdown_link_text(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
 fn first_meaningful_line(text: &str) -> Option<&str> {
     text.lines()
         .map(str::trim)
@@ -720,5 +744,60 @@ fn ensure_trailing_newline(text: &str) -> String {
         text.to_string()
     } else {
         format!("{text}\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn reindex_includes_root_pages_with_special_characters_in_titles() -> Result<()> {
+        let root = temp_test_dir("reindex-special-title");
+        let paths = test_paths(&root);
+
+        fs::create_dir_all(&paths.wiki_dir)?;
+        fs::write(&paths.index_path, "# Index\n")?;
+        fs::write(&paths.log_path, "# Log\n")?;
+        fs::write(
+            paths.wiki_dir.join("source-security-context.md"),
+            "# Source Security Context [Draft]\n\nA newly added page.\n",
+        )?;
+
+        reindex(&paths)?;
+
+        let index = fs::read_to_string(&paths.index_path)?;
+        assert!(
+            index.contains(r#"[Source Security Context \[Draft\]](source-security-context.md)"#)
+        );
+
+        let indexed = indexed_pages(&paths)?;
+        assert!(indexed.contains(Path::new("wiki/source-security-context.md")));
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    fn test_paths(root: &Path) -> WikiPaths {
+        let wiki_dir = root.join("wiki");
+        WikiPaths {
+            root: root.to_path_buf(),
+            raw_dir: root.join("raw"),
+            wiki_dir: wiki_dir.clone(),
+            sources_dir: wiki_dir.join("sources"),
+            analyses_dir: wiki_dir.join("analyses"),
+            index_path: wiki_dir.join("index.md"),
+            log_path: wiki_dir.join("log.md"),
+            schema_path: root.join(SCHEMA_FILE),
+        }
+    }
+
+    fn temp_test_dir(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("llm-wiki-{prefix}-{unique}"))
     }
 }
