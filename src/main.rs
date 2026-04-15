@@ -311,9 +311,9 @@ fn cmd_lint() -> Result<()> {
 }
 
 fn lint_issues(paths: &WikiPaths) -> Result<Vec<String>> {
-    let pages = load_pages(&paths)?;
+    let pages = load_pages(paths)?;
     let page_set: HashSet<PathBuf> = pages.iter().map(|page| page.rel_path.clone()).collect();
-    let indexed = indexed_pages(&paths)?;
+    let indexed = indexed_pages(paths)?;
     let sources_rel = paths.sources_dir.strip_prefix(&paths.root)?.to_path_buf();
     let analyses_rel = paths.analyses_dir.strip_prefix(&paths.root)?.to_path_buf();
     let index_rel = paths.index_path.strip_prefix(&paths.root)?.to_path_buf();
@@ -329,7 +329,7 @@ fn lint_issues(paths: &WikiPaths) -> Result<Vec<String>> {
             issues.push(format!("missing index entry: {}", page.rel_path.display()));
         }
 
-        for link in extract_links(&paths, page, &page_set)? {
+        for link in extract_links(paths, page, &page_set)? {
             let target = PathBuf::from(&link.target);
             if link.exists {
                 *inbound.entry(target).or_insert(0) += 1;
