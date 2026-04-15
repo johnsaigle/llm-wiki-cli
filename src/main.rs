@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -297,6 +297,20 @@ fn cmd_reindex() -> Result<()> {
 
 fn cmd_lint() -> Result<()> {
     let (_, paths) = load_workspace()?;
+    let issues = lint_issues(&paths)?;
+
+    if issues.is_empty() {
+        println!("Wiki lint passed.");
+        Ok(())
+    } else {
+        for issue in &issues {
+            println!("- {issue}");
+        }
+        bail!("wiki lint found {} issue(s)", issues.len())
+    }
+}
+
+fn lint_issues(paths: &WikiPaths) -> Result<Vec<String>> {
     let pages = load_pages(&paths)?;
     let page_set: HashSet<PathBuf> = pages.iter().map(|page| page.rel_path.clone()).collect();
     let indexed = indexed_pages(&paths)?;
@@ -339,15 +353,7 @@ fn cmd_lint() -> Result<()> {
         }
     }
 
-    if issues.is_empty() {
-        println!("Wiki lint passed.");
-        Ok(())
-    } else {
-        for issue in &issues {
-            println!("- {issue}");
-        }
-        bail!("wiki lint found {} issue(s)", issues.len())
-    }
+    Ok(issues)
 }
 
 fn load_workspace() -> Result<(Config, WikiPaths)> {
@@ -451,8 +457,38 @@ fn reindex(paths: &WikiPaths) -> Result<()> {
         );
     }
 
-    fs::write(&paths.index_path, ensure_trailing_newline(&index))
-        .with_context(|| format!("failed to write {}", paths.index_path.display()))?;
+    write_text_atomic(&paths.index_path, &index)?;
+    Ok(())
+}
+
+fn write_text_atomic(path: &Path, text: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("path {} has no parent directory", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("path {} has no file name", path.display()))?;
+    let tmp_path = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
+    let contents = ensure_trailing_newline(text);
+
+    fs::write(&tmp_path, contents)
+        .with_context(|| format!("failed to write temporary file {}", tmp_path.display()))?;
+    File::open(&tmp_path)
+        .with_context(|| format!("failed to open temporary file {}", tmp_path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync temporary file {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "failed to replace {} with {}",
+            path.display(),
+            tmp_path.display()
+        )
+    })?;
+    File::open(parent)
+        .with_context(|| format!("failed to open directory {}", parent.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync directory {}", parent.display()))?;
     Ok(())
 }
 
@@ -774,6 +810,28 @@ mod tests {
 
         let indexed = indexed_pages(&paths)?;
         assert!(indexed.contains(Path::new("wiki/source-security-context.md")));
+
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn lint_sees_new_page_immediately_after_reindex() -> Result<()> {
+        let root = temp_test_dir("lint-after-reindex");
+        let paths = test_paths(&root);
+
+        fs::create_dir_all(&paths.wiki_dir)?;
+        fs::write(&paths.index_path, "# Index\n")?;
+        fs::write(&paths.log_path, "# Log\n")?;
+        fs::write(
+            paths.wiki_dir.join("source-foo.md"),
+            "# Source Foo\n\nA newly added page.\n",
+        )?;
+
+        reindex(&paths)?;
+
+        assert!(lint_issues(&paths)?.is_empty());
+        assert!(lint_issues(&paths)?.is_empty());
 
         fs::remove_dir_all(&root)?;
         Ok(())
