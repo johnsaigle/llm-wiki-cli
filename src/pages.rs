@@ -17,6 +17,8 @@ use crate::text::{
 
 const SNIPPET_MAX_CHARS: usize = 200;
 
+const TITLE_MATCH_WEIGHT: usize = 5;
+
 static MARKDOWN_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[[^\]]+\]\(([^)#]+\.md)(?:#[^)]*)?\)").expect("markdown link regex is valid")
 });
@@ -96,10 +98,15 @@ pub fn search_pages(
         .iter()
         .filter(|page| !excluded.contains(&page.rel_path.as_path()))
         .filter_map(|page| {
-            let haystack = format!("{}\n{}", page.title, page.body).to_lowercase();
+            let title = page.title.to_lowercase();
+            let body = page.body.to_lowercase();
+            // A title match is a much stronger signal than a passing mention in the body.
             let score = tokens
                 .iter()
-                .map(|token| haystack.matches(token.as_str()).count())
+                .map(|token| {
+                    title.matches(token.as_str()).count() * TITLE_MATCH_WEIGHT
+                        + body.matches(token.as_str()).count()
+                })
                 .sum::<usize>();
             if score == 0 {
                 return None;
@@ -382,8 +389,8 @@ mod tests {
             5,
             &[Path::new("wiki/index.md"), Path::new("wiki/log.md")],
         )?;
-        // Title and the `# ` heading in the body both count.
-        assert_eq!(once[0].score, 2);
+        // The weighted title match and the `# ` heading in the body both count.
+        assert_eq!(once[0].score, TITLE_MATCH_WEIGHT + 1);
         assert_eq!(twice[0].score, once[0].score);
         Ok(())
     }

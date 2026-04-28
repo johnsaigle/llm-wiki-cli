@@ -74,11 +74,32 @@ pub fn wiki_paths(root: &Path, config: &Config) -> WikiPaths {
     }
 }
 
-pub fn load_workspace(root: &Path) -> Result<(Config, WikiPaths)> {
+pub const ROOT_ENV_VAR: &str = "LLM_WIKI_ROOT";
+
+/// Loads the workspace from `$LLM_WIKI_ROOT`, or else from the nearest of `start` and its
+/// ancestors that contains a config file.
+pub fn load_workspace(start: &Path) -> Result<(Config, WikiPaths)> {
+    let root = match std::env::var_os(ROOT_ENV_VAR) {
+        Some(env_root) => PathBuf::from(env_root),
+        None => find_workspace_root(start).with_context(|| {
+            format!(
+                "no {CONFIG_FILE} found in {} or any parent directory. \
+                 Run `llm-wiki init` or set {ROOT_ENV_VAR}.",
+                start.display()
+            )
+        })?,
+    };
     let config = read_config(&root.join(CONFIG_FILE))?;
     validate_config(&config)?;
-    let paths = wiki_paths(root, &config);
+    let paths = wiki_paths(&root, &config);
     Ok((config, paths))
+}
+
+fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|dir| dir.join(CONFIG_FILE).is_file())
+        .map(Path::to_path_buf)
 }
 
 pub fn default_schema(config: &Config) -> String {

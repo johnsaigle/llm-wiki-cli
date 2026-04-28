@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use crate::cli::{Commands, IngestArgs, InitArgs, PageArgs, SearchArgs};
+use crate::cli::{Commands, IngestArgs, InitArgs, JsonArgs, PageArgs, SearchArgs};
 use crate::config::{
     CONFIG_DIR, CONFIG_FILE, Config, default_schema, load_workspace, read_config, validate_config,
     wiki_paths,
@@ -23,8 +24,9 @@ pub fn run(command: Commands, root: &Path, out: &mut impl Write) -> Result<()> {
         Commands::Show(args) => cmd_show(&args, root, out),
         Commands::Links(args) => cmd_links(&args, root, out),
         Commands::Backlinks(args) => cmd_backlinks(&args, root, out),
-        Commands::Reindex => cmd_reindex(root, out),
-        Commands::Lint => cmd_lint(root, out),
+        Commands::List(args) => cmd_list(&args, root, out),
+        Commands::Reindex(args) => cmd_reindex(&args, root, out),
+        Commands::Lint(args) => cmd_lint(&args, root, out),
     }
 }
 
@@ -165,22 +167,67 @@ fn cmd_backlinks(args: &PageArgs, root: &Path, out: &mut impl Write) -> Result<(
     Ok(())
 }
 
-fn cmd_reindex(root: &Path, out: &mut impl Write) -> Result<()> {
+#[derive(Serialize)]
+struct PageSummary {
+    path: String,
+    title: String,
+}
+
+fn cmd_list(args: &JsonArgs, root: &Path, out: &mut impl Write) -> Result<()> {
     let (_, paths) = load_workspace(root)?;
-    reindex(&paths)?;
-    writeln!(
-        out,
-        "Rebuilt {}",
-        display_rel(paths.index_path.strip_prefix(&paths.root)?)
-    )?;
+    let summaries = load_pages(&paths)?
+        .into_iter()
+        .map(|page| PageSummary {
+            path: display_rel(&page.rel_path),
+            title: page.title,
+        })
+        .collect::<Vec<_>>();
+
+    if args.json {
+        writeln!(out, "{}", serde_json::to_string_pretty(&summaries)?)?;
+    } else {
+        for summary in summaries {
+            writeln!(out, "{}  {}", summary.path, summary.title)?;
+        }
+    }
     Ok(())
 }
 
-fn cmd_lint(root: &Path, out: &mut impl Write) -> Result<()> {
+fn cmd_reindex(args: &JsonArgs, root: &Path, out: &mut impl Write) -> Result<()> {
+    let (_, paths) = load_workspace(root)?;
+    let summary = reindex(&paths)?;
+
+    if args.json {
+        writeln!(out, "{}", serde_json::to_string_pretty(&summary)?)?;
+    } else {
+        writeln!(
+            out,
+            "Rebuilt {} ({} pages indexed)",
+            display_rel(paths.index_path.strip_prefix(&paths.root)?),
+            summary.pages_indexed
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct LintReport {
+    passed: bool,
+    issues: Vec<String>,
+}
+
+fn cmd_lint(args: &JsonArgs, root: &Path, out: &mut impl Write) -> Result<()> {
     let (_, paths) = load_workspace(root)?;
     let issues = lint_issues(&paths)?;
 
-    if issues.is_empty() {
+    if args.json {
+        let report = LintReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+        writeln!(out, "{}", serde_json::to_string_pretty(&report)?)?;
+        Ok(())
+    } else if issues.is_empty() {
         writeln!(out, "Wiki lint passed.")?;
         Ok(())
     } else {

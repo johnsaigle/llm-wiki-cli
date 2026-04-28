@@ -39,6 +39,9 @@ Pass --json to get structured JSON suitable for programmatic/tool-call use:
   show --json   → object  {path, title, body}
   links --json  → array of {source, target, exists}
   backlinks --json → array of {source, target, exists}
+  list --json   → array of {path, title}
+  reindex --json → object {pages_indexed}
+  lint --json   → object  {passed, issues}
 
 DIRECTORY LAYOUT AFTER INIT
 
@@ -54,7 +57,9 @@ DIRECTORY LAYOUT AFTER INIT
 CORE CONTRACT
 
   • This tool requires .llm-wiki/config.toml to exist (created by init).
-  • All commands except init MUST be run from the wiki root directory.
+  • Commands other than init find the wiki root by searching the current
+    directory and its parents for .llm-wiki/config.toml. Set LLM_WIKI_ROOT
+    to use a specific root instead.
   • Run reindex after any manual page write edit or delete.
   • Run lint before ending a session to catch breakage.
   • raw/ files are immutable — never edit them. Read-only.
@@ -67,7 +72,7 @@ scale this is sufficient. The index.md catalog provides fast overview.
 ";
 
 #[derive(Parser)]
-#[command(name = "llm-wiki")]
+#[command(name = "llm-wiki", version)]
 #[command(
     about = "Deterministic CLI helpers for an LLM-maintained markdown wiki",
     after_long_help = AFTER_LONG_HELP
@@ -155,6 +160,16 @@ pub enum Commands {
     Backlinks(PageArgs),
 
     #[command(
+        about = "List all wiki pages with their titles",
+        long_about = "List all wiki pages with their titles.\n\n\
+            Prints one line per page: the path relative to the wiki root,\n\
+            followed by the page title. Pages are sorted by path.\n\n\
+            This is a READ-ONLY operation — no files are modified.\n\n\
+            For structured tool-call consumption, pass --json."
+    )]
+    List(JsonArgs),
+
+    #[command(
         about = "Rebuild the index from all wiki pages",
         long_about = "Rebuild index.md from all wiki pages.\n\n\
             Scans every .md file in wiki/, groups them into Sources,\n\
@@ -166,7 +181,7 @@ pub enum Commands {
             Run this after creating, editing, or deleting any wiki page\n\
             to keep the index current."
     )]
-    Reindex,
+    Reindex(JsonArgs),
 
     #[command(
         about = "Health-check the wiki for broken links and orphans",
@@ -179,7 +194,7 @@ pub enum Commands {
             This is a READ-ONLY operation — no files are modified.\n\n\
             Run this before ending a session to verify wiki integrity."
     )]
-    Lint,
+    Lint(JsonArgs),
 }
 
 #[derive(Args)]
@@ -246,6 +261,15 @@ pub struct PageArgs {
         help = "Output page data as structured JSON instead of raw markdown",
         long_help = "Output page data as structured JSON (object with path,\n\
             title, and body fields) instead of raw markdown body text."
+    )]
+    pub json: bool,
+}
+
+#[derive(Args)]
+pub struct JsonArgs {
+    #[arg(
+        long,
+        help = "Output results as structured JSON instead of human-readable text"
     )]
     pub json: bool,
 }

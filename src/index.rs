@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use regex::Regex;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::fs;
@@ -13,11 +14,16 @@ use crate::fsutil::{
 use crate::pages::{PageIndex, extract_links, load_pages};
 use crate::text::{escape_markdown_link_text, first_meaningful_line, index_summary};
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ReindexSummary {
+    pub pages_indexed: usize,
+}
+
 static INDEX_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[(?:\\.|[^\\\]])+\]\(([^)]+\.md)\)").expect("index link regex is valid")
 });
 
-pub fn reindex(paths: &WikiPaths) -> Result<()> {
+pub fn reindex(paths: &WikiPaths) -> Result<ReindexSummary> {
     let pages = load_pages(paths)?;
     let index_rel = paths.index_path.strip_prefix(&paths.root)?;
     let log_rel = paths.log_path.strip_prefix(&paths.root)?;
@@ -26,11 +32,13 @@ pub fn reindex(paths: &WikiPaths) -> Result<()> {
     let mut sources = Vec::new();
     let mut analyses = Vec::new();
     let mut other = Vec::new();
+    let mut pages_indexed = 0;
 
     for page in &pages {
         if page.rel_path == index_rel || page.rel_path == log_rel {
             continue;
         }
+        pages_indexed += 1;
         let entry = format!(
             "- [{}]({}) - {}",
             escape_markdown_link_text(&page.title),
@@ -72,7 +80,7 @@ pub fn reindex(paths: &WikiPaths) -> Result<()> {
     }
 
     write_text_atomic(&paths.index_path, &index)?;
-    Ok(())
+    Ok(ReindexSummary { pages_indexed })
 }
 
 pub fn lint_issues(paths: &WikiPaths) -> Result<Vec<String>> {
