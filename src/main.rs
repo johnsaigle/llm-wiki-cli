@@ -804,9 +804,7 @@ mod tests {
         reindex(&paths)?;
 
         let index = fs::read_to_string(&paths.index_path)?;
-        assert!(
-            index.contains(r#"[Source Security Context \[Draft\]](source-security-context.md)"#)
-        );
+        assert!(index.contains(r"[Source Security Context \[Draft\]](source-security-context.md)"));
 
         let indexed = indexed_pages(&paths)?;
         assert!(indexed.contains(Path::new("wiki/source-security-context.md")));
