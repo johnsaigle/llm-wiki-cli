@@ -22,6 +22,10 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Get binary name
+        id: bin
+        run: echo "name=$(grep -m1 '^name' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Build release binary
         run: cargo build --release --locked --verbose
 
@@ -29,5 +33,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ github.event.repository.name }}-${{ github.sha }}
-          path: target/release/${{ github.event.repository.name }}
+          path: target/release/${{ steps.bin.outputs.name }}
+          if-no-files-found: error
           retention-days: 90

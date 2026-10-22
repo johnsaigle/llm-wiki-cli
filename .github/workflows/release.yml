@@ -50,9 +50,10 @@ jobs:
       - name: Prepare binary
         if: steps.check_tag.outputs.exists == 'false'
         run: |
+          BIN_NAME=$(grep -m1 '^name' Cargo.toml | cut -d'"' -f2)
           mkdir -p dist
-          cp target/release/${GITHUB_EVENT_REPOSITORY_NAME} dist/${GITHUB_EVENT_REPOSITORY_NAME}-linux-x64
-          chmod +x dist/${GITHUB_EVENT_REPOSITORY_NAME}-linux-x64
+          cp "target/release/$BIN_NAME" "dist/${GITHUB_EVENT_REPOSITORY_NAME}-linux-x64"
+          chmod +x "dist/${GITHUB_EVENT_REPOSITORY_NAME}-linux-x64"
         env:
           GITHUB_EVENT_REPOSITORY_NAME: ${{ github.event.repository.name }}
 
