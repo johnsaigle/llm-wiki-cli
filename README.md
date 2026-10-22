@@ -30,12 +30,12 @@ Or copy the binary to a location on your agent's `PATH`.
 |---------|---------|-----------------|
 | `llm-wiki init` | Scaffold a new wiki workspace with `raw/`, `wiki/sources/`, `wiki/analyses/`, `index.md`, `log.md`, and a `WIKI.md` schema | "Set up the wiki structure for this project" |
 | `llm-wiki ingest <source> --title "..."` | Copy a source into `raw/`, create a stub page in `wiki/sources/`, and reindex | "Register this paper/article as a source" |
-| `llm-wiki search <query> --top 5` | Token-based search across all wiki pages (excludes `log.md`) | "Find pages about Byzantine fault tolerance" |
+| `llm-wiki search <query> --top 5` | Token-based search across all wiki pages (excludes `index.md` and `log.md`) | "Find pages about Byzantine fault tolerance" |
 | `llm-wiki show <page>` | Read a full page by path, filename, slug, or title | "Read the `consensus-mechanisms.md` page" |
 | `llm-wiki links <page>` | List all outbound markdown/wikilink-style links from a page, noting broken ones | "Check what this page links to" |
 | `llm-wiki backlinks <page>` | Find all pages that link to a given page | "See which pages reference this concept" |
 | `llm-wiki reindex` | Rebuild `wiki/index.md` from all pages; verifies every page is indexed | "Update the index after creating new pages" |
-| `llm-wiki lint` | Check for broken links, orphan pages, and missing index entries | "Health-check the wiki before ending the session" |
+| `llm-wiki lint` | Check for broken links, orphan pages, and missing or stale index entries | "Health-check the wiki before ending the session" |
 
 All commands support a `--json` flag where applicable, making them ideal for structured tool-call responses.
 
